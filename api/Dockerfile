@@ -5,7 +5,6 @@ COPY api/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY api /app/api
-COPY app.db /app/app.db
 
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8001
