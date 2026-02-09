@@ -5,3 +5,5 @@ node_modules/
 dist/
 .env
 app.db
+
+cloudflared-windows-amd64.exe
