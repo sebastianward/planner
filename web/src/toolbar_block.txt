@@ -1,0 +1,12 @@
+<div className="toolbar">
+              <div className="view-tabs">
+                <button className={taskView === "month" ? "active" : ""} onClick={() => setTaskView("month")}>Mes</button>
+                <button className={taskView === "week" ? "active" : ""} onClick={() => setTaskView("week")}>Semana</button>
+                <button className={taskView === "day" ? "active" : ""} onClick={() => setTaskView("day")}>Dia</button>
+              </div>
+              <div className="nav-date">
+                <button onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1))}>◀</button>
+                <div>{currentDate.toLocaleString("es-CL", { month: "long", year: "numeric" })}</div>
+                <button onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1))}>▶</button>
+              </div>
+            
