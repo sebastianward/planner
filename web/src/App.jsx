@@ -79,6 +79,8 @@ export default function App() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(formatDate(new Date()));
   const [dragOverDate, setDragOverDate] = useState(null);
+  const [showTaskMoveModal, setShowTaskMoveModal] = useState(false);
+  const [taskMoveDraft, setTaskMoveDraft] = useState(null);
 
   const [workers, setWorkers] = useState([]);
   const [projects, setProjects] = useState([]);
@@ -157,6 +159,14 @@ export default function App() {
     });
     return map;
   }, [tasks]);
+  const plannableWorkers = useMemo(
+    () => workers.filter((w) => w.visible_in_planner !== false),
+    [workers]
+  );
+  const plannableWorkerIds = useMemo(
+    () => new Set(plannableWorkers.map((w) => w.id)),
+    [plannableWorkers]
+  );
 
   function handleLogout() {
     clearToken();
@@ -209,15 +219,43 @@ export default function App() {
     setUsersList(data);
   }
 
+  function mapTaskToPayload(task, taskDateOverride = null) {
+    return {
+      task_date: taskDateOverride || task.task_date,
+      title: task.title || "",
+      project: task.project || "",
+      start_time: task.start_time || "",
+      end_time: task.end_time || "",
+      prereq_ppe: task.prereq_ppe || "",
+      prereq_client_response: task.prereq_client_response || 0,
+      prereq_coord_st: task.prereq_coord_st || 0,
+      prereq_notes: task.prereq_notes || "",
+      worker_id: task.worker_id || null,
+      status: task.status || "Pendiente",
+      priority: task.priority || "Media",
+    };
+  }
+
   function handleWorkerDragStart(event, worker) {
     event.dataTransfer.setData("application/x-worker-id", String(worker.id));
     event.dataTransfer.setData("text/plain", worker.name);
     event.dataTransfer.effectAllowed = "copy";
   }
 
+  function handleTaskDragStart(event, task, sourceDate) {
+    if (!isAdmin) return;
+    event.dataTransfer.setData("application/x-task-id", String(task.id));
+    event.dataTransfer.setData("application/x-task-source-date", sourceDate || task.task_date);
+    // Keep a standard MIME payload for broader browser compatibility during DnD.
+    event.dataTransfer.setData("text/plain", String(task.id));
+    event.dataTransfer.effectAllowed = "move";
+  }
+
   function handleCellDragOver(event, dateKey) {
     event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
+    const types = Array.from(event.dataTransfer?.types || []);
+    const hasTaskPayload = types.includes("application/x-task-id");
+    event.dataTransfer.dropEffect = hasTaskPayload ? "move" : "copy";
     setDragOverDate(dateKey);
   }
 
@@ -230,6 +268,27 @@ export default function App() {
   async function handleCellDrop(event, dateKey) {
     event.preventDefault();
     setDragOverDate(null);
+
+    const taskIdRaw = event.dataTransfer.getData("application/x-task-id");
+    if (taskIdRaw && isAdmin) {
+      const taskId = Number(taskIdRaw);
+      const sourceDateRaw = event.dataTransfer.getData("application/x-task-source-date");
+      const task = tasks.find((t) => t.id === taskId);
+      if (!task) return;
+      const sourceDate = sourceDateRaw || task.task_date;
+      if (sourceDate === dateKey) return;
+      setTaskMoveDraft({
+        task,
+        sourceDate,
+        targetDate: dateKey,
+        mode: "move",
+        reason: "",
+      });
+      setSelectedDate(dateKey);
+      setShowTaskMoveModal(true);
+      return;
+    }
+
     const workerIdRaw = event.dataTransfer.getData("application/x-worker-id");
     if (!workerIdRaw) return;
     const workerId = Number(workerIdRaw);
@@ -303,8 +362,8 @@ export default function App() {
   function openAssign(task) {
     setAssignTask(task);
     const initialIds = task.workers?.length
-      ? task.workers.map((w) => w.id)
-      : (task.worker_id ? [task.worker_id] : []);
+      ? task.workers.map((w) => w.id).filter((id) => plannableWorkerIds.has(id))
+      : (task.worker_id && plannableWorkerIds.has(task.worker_id) ? [task.worker_id] : []);
     setAssignWorkerIds(initialIds);
     setShowAssignModal(true);
   }
@@ -314,6 +373,37 @@ export default function App() {
     await api.assignWorkers(assignTask.id, assignWorkerIds);
     setShowAssignModal(false);
     setAssignTask(null);
+    await reloadTasks();
+  }
+
+  function closeTaskMoveModal() {
+    setShowTaskMoveModal(false);
+    setTaskMoveDraft(null);
+  }
+
+  async function confirmTaskMoveAction() {
+    if (!taskMoveDraft) return;
+    const { task, sourceDate, targetDate, mode, reason } = taskMoveDraft;
+    if (mode === "move" && !reason.trim()) {
+      window.alert("Debes indicar una causa para mover la tarea.");
+      return;
+    }
+
+    if (mode === "move") {
+      await api.updateTask(task.id, mapTaskToPayload(task, targetDate));
+      await api.addLog(task.id, `Tarea movida de ${sourceDate} a ${targetDate}. Motivo: ${reason.trim()}`);
+    } else {
+      const copiedTask = await api.createTask(mapTaskToPayload(task, targetDate));
+      const workerIds = task.workers?.length
+        ? task.workers.map((w) => w.id).filter((id) => plannableWorkerIds.has(id))
+        : (task.worker_id && plannableWorkerIds.has(task.worker_id) ? [task.worker_id] : []);
+      if (workerIds.length > 0) {
+        await api.assignWorkers(copiedTask.id, workerIds);
+      }
+      await api.addLog(copiedTask.id, `Tarea copiada desde #${task.id} (${sourceDate} -> ${targetDate})`);
+    }
+
+    closeTaskMoveModal();
     await reloadTasks();
   }
 
@@ -384,7 +474,7 @@ export default function App() {
           <div className="sidebar-section">
             <div className="sidebar-title">Equipo</div>
                 <div className="worker-list">
-                  {workers.map((w) => (
+                  {plannableWorkers.map((w) => (
                     <button
                       key={w.id}
                       className="worker-chip"
@@ -464,6 +554,11 @@ export default function App() {
                                 className="bar"
                                 style={{ background: dot.color }}
                                 data-title={dot.title}
+                                draggable={isAdmin}
+                                onDragStart={(e) => {
+                                  e.stopPropagation();
+                                  handleTaskDragStart(e, dot.task, key);
+                                }}
                                 onDoubleClick={(e) => {
                                   e.stopPropagation();
                                   setSelectedDate(key);
@@ -489,7 +584,9 @@ export default function App() {
                     {selectedTasks.map((t) => (
                       <div
                         key={t.id}
-                        className={`task-card${selectedDayTaskId === t.id ? " selected" : ""}`}
+                        className={`task-card${selectedDayTaskId === t.id ? " selected" : ""}${isAdmin ? " draggable-task" : ""}`}
+                        draggable={isAdmin}
+                        onDragStart={(e) => handleTaskDragStart(e, t, t.task_date)}
                         onClick={() => setSelectedDayTaskId(t.id)}
                         onDoubleClick={() => openDetail(t)}
                       >
@@ -581,7 +678,9 @@ export default function App() {
                         title="Doble click para editar"
                       >
                         <div className="title">{w.name}</div>
-                        <div className="meta">{w.status}</div>
+                        <div className="meta">
+                          {w.status} | {w.visible_in_planner === false ? "Oculto en planner" : "Visible en planner"}
+                        </div>
                       </div>
                     ))}
                     {workers.length === 0 && <div className="card">Sin trabajadores</div>}
@@ -698,7 +797,7 @@ export default function App() {
       </main>
 
       <Modal title="Crear tarea" open={showTaskModal} onClose={() => { setShowTaskModal(false); setTaskDraft(null); }}>
-        <TaskForm workers={workers} projects={projects} onSubmit={createTask} initialValues={taskDraft} />
+        <TaskForm workers={plannableWorkers} projects={projects} onSubmit={createTask} initialValues={taskDraft} />
       </Modal>
 
       <Modal
@@ -734,7 +833,7 @@ export default function App() {
 
       <Modal title="Asignar trabajadores" open={showAssignModal} onClose={() => setShowAssignModal(false)}>
         <div className="form">
-          {workers.map((w) => (
+          {plannableWorkers.map((w) => (
             <label key={w.id}>
               <input
                 type="checkbox"
@@ -765,7 +864,7 @@ export default function App() {
               <button type="button" onClick={() => openLogs(detailTask.id)}>Comentarios</button>
             </div>
             <TaskForm
-              workers={workers}
+              workers={plannableWorkers}
               projects={projects}
               onSubmit={(payload) => updateTask(detailTask.id, payload)}
               initialValues={mapTaskToForm(detailTask)}
@@ -852,6 +951,48 @@ export default function App() {
           />
           <button type="submit">Guardar</button>
         </form>
+      </Modal>
+
+      <Modal title="Mover o copiar tarea" open={showTaskMoveModal} onClose={closeTaskMoveModal}>
+        {taskMoveDraft && (
+          <div className="form">
+            <div className="detail-meta">
+              <div><strong>Tarea:</strong> #{taskMoveDraft.task.id} {taskMoveDraft.task.title}</div>
+              <div><strong>Origen:</strong> {taskMoveDraft.sourceDate}</div>
+              <div><strong>Destino:</strong> {taskMoveDraft.targetDate}</div>
+            </div>
+            <label>
+              <input
+                type="radio"
+                checked={taskMoveDraft.mode === "move"}
+                onChange={() => setTaskMoveDraft({ ...taskMoveDraft, mode: "move" })}
+              />
+              Mover tarea
+            </label>
+            <label>
+              <input
+                type="radio"
+                checked={taskMoveDraft.mode === "copy"}
+                onChange={() => setTaskMoveDraft({ ...taskMoveDraft, mode: "copy" })}
+              />
+              Copiar tarea
+            </label>
+            {taskMoveDraft.mode === "move" && (
+              <>
+                <label>Causa del movimiento</label>
+                <textarea
+                  value={taskMoveDraft.reason}
+                  onChange={(e) => setTaskMoveDraft({ ...taskMoveDraft, reason: e.target.value })}
+                  placeholder="Ej: reprogramacion por solicitud del cliente"
+                />
+              </>
+            )}
+            <div className="actions">
+              <button type="button" onClick={closeTaskMoveModal}>Cancelar</button>
+              <button type="button" onClick={confirmTaskMoveAction}>Confirmar</button>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );
@@ -973,7 +1114,12 @@ function TaskForm({ workers, projects, onSubmit, initialValues, submitLabel, rea
 }
 
 function WorkerForm({ onSubmit, initialValues }) {
-  const [form, setForm] = useState({ name: "", status: "Activo", color: "#6c757d" });
+  const [form, setForm] = useState({
+    name: "",
+    status: "Activo",
+    color: "#6c757d",
+    visible_in_planner: true,
+  });
 
   useEffect(() => {
     if (initialValues) {
@@ -981,6 +1127,7 @@ function WorkerForm({ onSubmit, initialValues }) {
         name: initialValues.name || "",
         status: initialValues.status || "Activo",
         color: initialValues.color || "#6c757d",
+        visible_in_planner: initialValues.visible_in_planner !== false,
       });
     }
   }, [initialValues]);
@@ -996,6 +1143,14 @@ function WorkerForm({ onSubmit, initialValues }) {
       </select>
       <label>Color</label>
       <input type="color" value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} />
+      <label>
+        <input
+          type="checkbox"
+          checked={!!form.visible_in_planner}
+          onChange={(e) => setForm({ ...form, visible_in_planner: e.target.checked })}
+        />
+        Visible en planner (sidebar y asignacion)
+      </label>
       <button type="submit">Guardar</button>
     </form>
   );

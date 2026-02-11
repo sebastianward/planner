@@ -42,6 +42,7 @@ class WorkerBase(BaseModel):
     name: str
     status: str = "Activo"
     color: str = "#6c757d"
+    visible_in_planner: bool = True
 
 
 class WorkerOut(WorkerBase):

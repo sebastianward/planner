@@ -81,6 +81,17 @@ def add_task_log(db: Session, task_id: int, user: Optional[models.User], content
     db.add(models.TaskLog(task_id=task_id, user_id=user.id if user else None, content=content))
 
 
+def get_plannable_worker_or_400(db: Session, worker_id: Optional[int]):
+    if not worker_id:
+        return None
+    worker = db.query(models.Worker).filter(models.Worker.id == worker_id).first()
+    if not worker:
+        raise HTTPException(status_code=400, detail="Trabajador invalido")
+    if not worker.visible_in_planner:
+        raise HTTPException(status_code=400, detail="Trabajador no visible para planificacion")
+    return worker
+
+
 @app.on_event("startup")
 def ensure_admin():
     admin_email = os.getenv("ADMIN_EMAIL")
@@ -103,7 +114,7 @@ def ensure_admin():
 
 
 @app.on_event("startup")
-def ensure_task_log_columns():
+def ensure_schema_columns():
     if not engine.url.get_backend_name().startswith("sqlite"):
         return
     with engine.connect() as conn:
@@ -122,6 +133,12 @@ def ensure_task_log_columns():
         col_names = {row[1] for row in columns}
         if "user_id" not in col_names:
             conn.exec_driver_sql("ALTER TABLE task_logs ADD COLUMN user_id INTEGER")
+        worker_columns = conn.exec_driver_sql("PRAGMA table_info(workers)").fetchall()
+        worker_col_names = {row[1] for row in worker_columns}
+        if "visible_in_planner" not in worker_col_names:
+            conn.exec_driver_sql(
+                "ALTER TABLE workers ADD COLUMN visible_in_planner INTEGER NOT NULL DEFAULT 1"
+            )
         conn.exec_driver_sql(
             """
             INSERT INTO task_workers (task_id, worker_id)
@@ -240,7 +257,12 @@ def list_workers(db: Session = Depends(get_db), _: models.User = Depends(require
 
 @app.post("/workers", response_model=schemas.WorkerOut)
 def create_worker(payload: schemas.WorkerBase, db: Session = Depends(get_db), _: models.User = Depends(require_admin)):
-    worker = models.Worker(name=payload.name, status=payload.status, color=payload.color)
+    worker = models.Worker(
+        name=payload.name,
+        status=payload.status,
+        color=payload.color,
+        visible_in_planner=payload.visible_in_planner,
+    )
     db.add(worker)
     db.commit()
     db.refresh(worker)
@@ -255,6 +277,7 @@ def update_worker(worker_id: int, payload: schemas.WorkerBase, db: Session = Dep
     worker.name = payload.name
     worker.status = payload.status
     worker.color = payload.color
+    worker.visible_in_planner = payload.visible_in_planner
     db.commit()
     db.refresh(worker)
     return worker
@@ -337,6 +360,7 @@ def tasks_history(db: Session = Depends(get_db), _: models.User = Depends(requir
 @app.post("/tasks", response_model=schemas.TaskOut)
 def create_task(payload: schemas.TaskCreate, db: Session = Depends(get_db), _: models.User = Depends(require_admin)):
     user = _
+    get_plannable_worker_or_400(db, payload.worker_id)
     task = models.Task(
         task_date=payload.task_date,
         title=payload.title,
@@ -366,6 +390,7 @@ def create_task(payload: schemas.TaskCreate, db: Session = Depends(get_db), _: m
 @app.put("/tasks/{task_id}", response_model=schemas.TaskOut)
 def update_task(task_id: int, payload: schemas.TaskUpdate, db: Session = Depends(get_db), _: models.User = Depends(require_admin)):
     user = _
+    get_plannable_worker_or_400(db, payload.worker_id)
     task = db.query(models.Task).filter(models.Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="No encontrado")
@@ -397,7 +422,10 @@ def assign_workers(task_id: int, payload: schemas.TaskAssign, db: Session = Depe
         raise HTTPException(status_code=404, detail="No encontrado")
     worker_ids = list(dict.fromkeys(payload.worker_ids))
     if worker_ids:
-        existing = db.query(models.Worker.id).filter(models.Worker.id.in_(worker_ids)).all()
+        existing = db.query(models.Worker.id).filter(
+            models.Worker.id.in_(worker_ids),
+            models.Worker.visible_in_planner.is_(True),
+        ).all()
         existing_ids = {row[0] for row in existing}
         if len(existing_ids) != len(worker_ids):
             raise HTTPException(status_code=400, detail="Trabajador invalido")

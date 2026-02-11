@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from .database import Base
@@ -25,6 +25,7 @@ class Worker(Base):
     name = Column(String, unique=True, nullable=False)
     status = Column(String, nullable=False, default="Activo")
     color = Column(String, nullable=False, default="#6c757d")
+    visible_in_planner = Column(Boolean, nullable=False, default=True)
     tasks = relationship("Task", secondary="task_workers", back_populates="workers")
 
 

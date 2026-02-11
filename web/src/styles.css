@@ -281,6 +281,10 @@ main {
   position: relative;
 }
 
+.bar[draggable="true"] {
+  cursor: grab;
+}
+
 .bar:hover::after {
   content: attr(data-title);
   position: absolute;
@@ -318,6 +322,10 @@ main {
   border-color: #3a6fff;
   box-shadow: 0 0 0 1px rgba(58, 111, 255, 0.25);
   background: #20262d;
+}
+
+.list .task-card.draggable-task {
+  cursor: grab;
 }
 
 .list .task-card.selected {
