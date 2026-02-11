@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import FastAPI, Depends, HTTPException, status
@@ -25,6 +25,10 @@ app.add_middleware(
 )
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+
+
+def utc_now():
+    return datetime.now(timezone.utc)
 
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
@@ -374,7 +378,7 @@ def create_task(payload: schemas.TaskCreate, db: Session = Depends(get_db), _: m
         worker_id=payload.worker_id,
         status=payload.status,
         priority=payload.priority,
-        updated_at=datetime.utcnow(),
+        updated_at=utc_now(),
     )
     db.add(task)
     db.commit()
@@ -406,7 +410,7 @@ def update_task(task_id: int, payload: schemas.TaskUpdate, db: Session = Depends
         ).first()
         if not exists:
             db.add(models.TaskWorker(task_id=task_id, worker_id=payload.worker_id))
-    task.updated_at = datetime.utcnow()
+    task.updated_at = utc_now()
     if changes:
         add_task_log(db, task_id, user, f"Tarea actualizada: {', '.join(changes)}")
     db.commit()
@@ -433,7 +437,7 @@ def assign_workers(task_id: int, payload: schemas.TaskAssign, db: Session = Depe
     for wid in worker_ids:
         db.add(models.TaskWorker(task_id=task_id, worker_id=wid))
     task.worker_id = worker_ids[0] if worker_ids else None
-    task.updated_at = datetime.utcnow()
+    task.updated_at = utc_now()
     names = []
     if worker_ids:
         names = [w.name for w in db.query(models.Worker).filter(models.Worker.id.in_(worker_ids)).all()]
@@ -451,7 +455,7 @@ def update_status(task_id: int, status_value: str, db: Session = Depends(get_db)
     if not user_can_access_task(user, task):
         raise HTTPException(status_code=403, detail="Sin permiso")
     task.status = status_value
-    task.updated_at = datetime.utcnow()
+    task.updated_at = utc_now()
     add_task_log(db, task_id, user, f"Estado cambiado a {status_value}")
     db.commit()
     return {"ok": True}
@@ -463,8 +467,8 @@ def delete_task(task_id: int, reason: str, db: Session = Depends(get_db), _: mod
     task = db.query(models.Task).filter(models.Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="No encontrado")
-    task.deleted_at = datetime.utcnow()
-    task.updated_at = datetime.utcnow()
+    task.deleted_at = utc_now()
+    task.updated_at = utc_now()
     add_task_log(db, task_id, user, f"Tarea eliminada. Motivo: {reason}")
     db.commit()
     return {"ok": True}

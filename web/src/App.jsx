@@ -27,6 +27,16 @@ function monthGrid(date) {
   return cells;
 }
 
+function formatDateTimeCL(value) {
+  if (!value) return "";
+  const raw = String(value).trim().replace(" ", "T");
+  const hasTimezone = /[zZ]$|[+-]\d{2}:\d{2}$/.test(raw);
+  const iso = hasTimezone ? raw : `${raw}Z`;
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return raw;
+  return parsed.toLocaleString("es-CL", { timeZone: "America/Santiago" });
+}
+
 function Login({ onLogged }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -881,7 +891,7 @@ export default function App() {
             <div key={log.id} className="log-item">
               <div className="log-meta">
                 <span>#{log.id}</span>
-                <span>{new Date(log.created_at).toLocaleString("es-CL")}</span>
+                <span>{formatDateTimeCL(log.created_at)}</span>
                 <span>{log.user_email || "Sistema"}</span>
                 <span>{log.user_role || ""}</span>
               </div>
