@@ -563,11 +563,17 @@ export default function App() {
                                 key={dot.key}
                                 className="bar"
                                 style={{ background: dot.color }}
-                                data-title={dot.title}
+                                data-title={`${dot.title}${isAdmin ? " | Click derecho: eliminar" : ""}`}
                                 draggable={isAdmin}
                                 onDragStart={(e) => {
                                   e.stopPropagation();
                                   handleTaskDragStart(e, dot.task, key);
+                                }}
+                                onContextMenu={(e) => {
+                                  if (!isAdmin) return;
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  deleteTask(dot.task);
                                 }}
                                 onDoubleClick={(e) => {
                                   e.stopPropagation();
@@ -872,6 +878,19 @@ export default function App() {
             </div>
             <div className="actions" style={{ marginBottom: 8 }}>
               <button type="button" onClick={() => openLogs(detailTask.id)}>Comentarios</button>
+              {isAdmin && (
+                <button
+                  type="button"
+                  className="danger"
+                  onClick={async () => {
+                    await deleteTask(detailTask);
+                    setShowDetailModal(false);
+                    setDetailTask(null);
+                  }}
+                >
+                  Eliminar
+                </button>
+              )}
             </div>
             <TaskForm
               workers={plannableWorkers}
